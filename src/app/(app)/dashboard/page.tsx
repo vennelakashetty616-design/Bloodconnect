@@ -8,62 +8,83 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { BloodGroupBadge, StatusBadge } from '@/components/ui/Badge'
 import { useAuth } from '@/hooks/useAuth'
-import { getSupabaseClient } from '@/lib/supabase/client'
 import { BloodRequest } from '@/types'
 import { timeAgo } from '@/lib/utils'
 
-const DEMO_MY_REQUESTS: BloodRequest[] = [
-  {
-    id: 'demo-my-1',
-    requester_id: 'demo-test',
-    blood_group: 'O+',
-    hospital_name: 'City Care Hospital',
-    hospital_address: '12 MG Road, Downtown',
-    hospital_lat: 19.0819,
-    hospital_lng: 72.886,
-    requester_lat: 19.0819,
-    requester_lng: 72.886,
-    contact_number: '+91-90000-10001',
-    units_needed: 2,
-    urgency: 'emergency',
-    status: 'matched',
-    notes: 'Trauma case in emergency ward. Donor accepted!',
-    created_at: '2026-03-13T10:40:00.000Z',
-    updated_at: '2026-03-13T10:50:00.000Z',
-    expires_at: '2026-03-13T14:40:00.000Z',
-  },
-]
+function getProgressCopy(status: BloodRequest['status']) {
+  switch (status) {
+    case 'requested':
+      return 'Waiting for donors to accept'
+    case 'donor_committed':
+      return 'Donor found for your request'
+    case 'en_route':
+      return 'Donor is on the way to your hospital'
+    case 'donation_in_progress':
+      return 'Donation in progress at hospital'
+    case 'pending':
+      return 'Waiting for donors to accept'
+    case 'matched':
+      return 'Matching donors found. Waiting for acceptance'
+    case 'accepted':
+      return 'Donor found for your request'
+    case 'in_transit':
+      return 'Donor is on the way to your hospital'
+    case 'arrived':
+      return 'Donor arrived at hospital'
+    case 'completed':
+      return 'Request completed successfully'
+    case 'cancelled':
+      return 'Request was cancelled'
+    default:
+      return 'Request in progress'
+  }
+}
 
 export default function DashboardPage() {
   const { user, donor } = useAuth()
   const [myRequests, setMyRequests] = useState<BloodRequest[]>([])
   const [nearbyCount, setNearbyCount] = useState(0)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!user) return
-    const supabase = getSupabaseClient()
+    let mounted = true
 
-    // Fetch my blood requests
-    supabase
-      .from('blood_requests')
-      .select('*, accepted_donor:donors!accepted_donor_id(*, profile:profiles!user_id(full_name, phone))')
-      .eq('requester_id', user.id)
-      .not('status', 'in', '(cancelled,completed)')
-      .order('created_at', { ascending: false })
-      .limit(3)
-      .then(({ data }) => {
-        // Use demo data if no real requests
-        setMyRequests((data as BloodRequest[]) ?? DEMO_MY_REQUESTS)
-        setLoading(false)
-      })
+    async function fetchDashboardData() {
+      try {
+        const res = await fetch('/api/requests?status=pending,matched,accepted,in_transit,arrived,completed,cancelled', {
+          cache: 'no-store',
+        })
+        const json = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(json.error ?? 'Failed to load dashboard data')
 
-    // Count active requests from others (emergency awareness)
-    supabase
-      .from('blood_requests')
-      .select('id', { count: 'exact', head: true })
-      .in('status', ['pending', 'matched'])
-      .then(({ count }) => setNearbyCount(count ?? 3)) // Show 3 as default
+        if (!mounted) return
+
+        const all = (json.requests as BloodRequest[]) ?? []
+        const mine = all
+          .filter((r) => r.requester_id === user.id)
+          .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+          .slice(0, 5)
+        setMyRequests(mine)
+
+        const activeCount = all.filter((r) => r.status === 'pending' || r.status === 'matched').length
+        setNearbyCount(activeCount)
+      } catch {
+        if (!mounted) return
+        setMyRequests([])
+        setNearbyCount(0)
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    }
+
+    fetchDashboardData()
+    const interval = window.setInterval(fetchDashboardData, 10000)
+
+    return () => {
+      mounted = false
+      window.clearInterval(interval)
+    }
   }, [user])
 
   const hour = new Date().getHours()
@@ -178,17 +199,17 @@ export default function DashboardPage() {
           </motion.div>
         )}
 
-        {/* Recent requests feed */}
+        {/* Recent activities feed */}
         <section>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold text-slate-900">Recent Requests</h2>
+            <h2 className="font-bold text-slate-900">Recent Activities</h2>
             <Link href="/request/history" className="text-red-700 text-sm font-semibold">
               View all
             </Link>
           </div>
 
           {loading ? (
-            <Card className="p-4 bg-white">Loading requests...</Card>
+            <Card className="p-4 bg-white">Loading activities...</Card>
           ) : myRequests.length > 0 ? (
             <div className="space-y-3">
               {myRequests.map((req, i) => (
@@ -211,12 +232,13 @@ export default function DashboardPage() {
                         <MapPin size={14} className="text-slate-400" />
                         {req.hospital_name}
                       </p>
-                      {req.status === 'in_transit' && (
-                        <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-red-700 text-xs font-bold">
-                          <span className="animate-pulse">●</span>
-                          Donor is on the way
-                        </div>
-                      )}
+                      <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-red-700 text-xs font-bold">
+                        <span className={req.status === 'in_transit' ? 'animate-pulse' : ''}>●</span>
+                        {getProgressCopy(req.status)}
+                      </div>
+                      <div className="mt-2 text-xs font-semibold text-red-700 flex items-center gap-1">
+                        Open progress <ChevronRight size={13} />
+                      </div>
                     </Card>
                   </Link>
                 </motion.div>
@@ -224,7 +246,7 @@ export default function DashboardPage() {
             </div>
           ) : (
             <Card className="p-5 border border-amber-200 bg-white text-center">
-              <p className="text-sm text-slate-600 mb-3">No active requests yet.</p>
+              <p className="text-sm text-slate-600 mb-3">No recent activities yet.</p>
               <Link href="/request/create">
                 <Button variant="secondary" size="md" className="rounded-xl" icon={<Droplet size={16} />}>
                   Start First Request

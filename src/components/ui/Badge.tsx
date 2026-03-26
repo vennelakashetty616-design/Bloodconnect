@@ -40,6 +40,13 @@ export function BloodGroupBadge({ group, size = 'md', className }: BloodGroupBad
 }
 
 const STATUS_STYLE: Record<RequestStatus, string> = {
+  requested: 'bg-trust-50 text-trust-700 border-trust-200',
+  donor_committed: 'bg-trust-100 text-trust-800 border-trust-200',
+  en_route: 'bg-trust-100 text-trust-800 border-trust-200 animate-pulse',
+  donation_in_progress: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  completed: 'bg-gray-100 text-gray-700 border-gray-200',
+  cancelled: 'bg-orange-50 text-orange-600 border-orange-100',
+
   pending:    'bg-trust-50 text-trust-700 border-trust-200',
   matched:    'bg-trust-100 text-trust-800 border-trust-200',
   accepted:   'bg-trust-100 text-trust-800 border-trust-200',

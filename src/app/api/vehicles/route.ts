@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { resolveEffectiveUser } from '@/lib/auth/devBypass'
 import { BookVehiclePayload } from '@/types'
 
 // Simulated dispatch pool (in production this would connect to a real dispatch system)
@@ -39,7 +40,8 @@ export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const effectiveUser = await resolveEffectiveUser(user)
+    if (!effectiveUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body: BookVehiclePayload = await req.json()
 

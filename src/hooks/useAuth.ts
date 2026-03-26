@@ -4,9 +4,14 @@ import { getSupabaseClient } from '@/lib/supabase/client'
 import { Profile, Donor } from '@/types'
 import { useAppStore } from '@/store/appStore'
 
-function isDemoSession() {
-  if (typeof window === 'undefined') return false
-  return document.cookie.includes('demo_mode=true') || localStorage.getItem('demo_mode') === 'true'
+function isMissingTableError(err: any, table: string) {
+  const msg = String(err?.message ?? '').toLowerCase()
+  return (
+    msg.includes(`could not find the table 'public.${table}'`) ||
+    msg.includes(`relation \"${table}\" does not exist`) ||
+    err?.code === 'PGRST205' ||
+    err?.code === '42P01'
+  )
 }
 
 export function useAuth() {
@@ -26,11 +31,15 @@ export function useAuth() {
           const emailFallback = session.user.email?.split('@')[0] || 'Donor'
 
           // Fetch profile
-          const { data: profile } = await supabase
+          const { data: profile, error: profileErr } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', session.user.id)
             .single()
+
+          if (profileErr && !isMissingTableError(profileErr, 'profiles')) {
+            console.warn('[useAuth] profile load failed:', profileErr.message)
+          }
 
           if (profile) {
             const normalizedProfile = {
@@ -52,34 +61,20 @@ export function useAuth() {
           }
 
           // Fetch donor profile
-          const { data: donorData } = await supabase
+          const { data: donorData, error: donorErr } = await supabase
             .from('donors')
             .select('*')
             .eq('user_id', session.user.id)
             .single()
 
+          if (donorErr && !isMissingTableError(donorErr, 'donors')) {
+            console.warn('[useAuth] donor load failed:', donorErr.message)
+          }
+
           if (donorData) setDonor(donorData as Donor)
         } else {
-          if (isDemoSession()) {
-            const storedProfileRaw = localStorage.getItem('fuellife_demo_profile_current')
-            if (storedProfileRaw) {
-              const storedProfile = JSON.parse(storedProfileRaw) as Profile
-              setUser(storedProfile)
-            } else {
-              setUser(null)
-            }
-
-            const emailKey = (JSON.parse(localStorage.getItem('fuellife_demo_profile_current') || '{}')?.email || '').toLowerCase()
-            const donorRaw = emailKey ? localStorage.getItem(`fuellife_demo_donor_${emailKey}`) : null
-            if (donorRaw) {
-              setDonor(JSON.parse(donorRaw) as Donor)
-            } else {
-              setDonor(null)
-            }
-          } else {
-            setUser(null)
-            setDonor(null)
-          }
+          setUser(null)
+          setDonor(null)
         }
         setLoading(false)
       }
@@ -89,11 +84,14 @@ export function useAuth() {
   }, [])
 
   const signOut = async () => {
-    await supabase.auth.signOut()
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('demo_mode')
-      document.cookie = 'demo_mode=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } catch {
+      // Continue with client-side signout even if API call fails.
     }
+
+    await supabase.auth.signOut()
+    document.cookie = 'demo_mode=; Path=/; Max-Age=0; SameSite=Lax'
     useAppStore.getState().reset()
   }
 

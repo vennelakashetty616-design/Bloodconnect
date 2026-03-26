@@ -3,13 +3,21 @@
 export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-'
 
 export type RequestStatus =
+  | 'requested'            // new workflow: request created and searching
+  | 'donor_committed'      // donor accepted/committed
+  | 'en_route'             // donor traveling
+  | 'donation_in_progress' // donor arrived and donation started
+  | 'completed'            // donation done
+  | 'cancelled'            // cancelled or expired
+
+  // Legacy compatibility values still returned by some storage paths
   | 'pending'       // waiting for donors
   | 'matched'       // donors notified
   | 'accepted'      // a donor accepted
   | 'in_transit'    // donor travelling
   | 'arrived'       // donor at hospital
-  | 'completed'     // donation done
-  | 'cancelled'     // cancelled or expired
+  | 'completed'
+  | 'cancelled'
 
 export type VehicleType = 'bike' | 'cab'
 export type VehicleStatus = 'available' | 'dispatched' | 'arrived'
@@ -150,12 +158,14 @@ export interface CreateRequestPayload {
   patient_name: string
   age: number
   gender: 'male' | 'female' | 'other'
+  medical_reason: 'surgery' | 'accident' | 'delivery' | 'thalassemia' | 'other'
   hospital_name?: string
   hospital_address?: string
   hospital_lat?: number
   hospital_lng?: number
   requester_lat: number
   requester_lng: number
+  doctor_contact?: string
   contact_number?: string
   units_needed: number
   urgency?: 'emergency' | 'priority' | 'normal'
@@ -222,6 +232,13 @@ export const URGENCY_COLORS = {
 } as const
 
 export const STATUS_LABELS: Record<RequestStatus, string> = {
+  requested: 'Searching for Donors',
+  donor_committed: 'Donor Committed',
+  en_route: 'Donor En Route',
+  donation_in_progress: 'Donation In Progress',
+  completed: 'Donation Complete',
+  cancelled: 'Cancelled',
+
   pending: 'Finding Donors...',
   matched: 'Donors Notified',
   accepted: 'Donor Accepted',

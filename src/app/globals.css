@@ -168,8 +168,79 @@ body {
   50% { transform: translateY(-18px); opacity: 0.4; }
 }
 
+@keyframes loaderRingPulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  80% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+@keyframes loaderDropBeat {
+  0%, 100% { transform: translateY(0) scale(1); }
+  18% { transform: translateY(-2px) scale(1.04); }
+  38% { transform: translateY(1px) scale(0.97); }
+  60% { transform: translateY(-1px) scale(1.02); }
+}
+
+@keyframes loaderLineBeat {
+  0% {
+    stroke-dashoffset: 108;
+    opacity: 0.4;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0.55;
+  }
+}
+
 .ring-expand {
   animation: ring-expand 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.loader-heartbeat-ring {
+  position: absolute;
+  width: 74px;
+  height: 74px;
+  border-radius: 999px;
+  border: 2px solid rgba(177, 18, 38, 0.45);
+  animation: loaderRingPulse 1.9s ease-out infinite;
+}
+
+.loader-heartbeat-ring-delay {
+  animation-delay: 0.95s;
+}
+
+.loader-blood-drop {
+  width: 40px;
+  height: 54px;
+  filter: drop-shadow(0 8px 14px rgba(177, 18, 38, 0.28));
+  animation: loaderDropBeat 1.15s ease-in-out infinite;
+}
+
+.loader-pulse-line {
+  position: absolute;
+  width: 130px;
+  height: 30px;
+  top: calc(50% + 20px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.loader-pulse-line path {
+  stroke-dasharray: 108;
+  stroke-dashoffset: 108;
+  animation: loaderLineBeat 1.6s linear infinite;
 }
 
 /* ─── Donor card hover effect ───────────────────────────────────────────── */

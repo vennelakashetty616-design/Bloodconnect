@@ -1,22 +1,7 @@
+import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
-import { isDevAuthBypassEnabled } from '@/lib/auth/devBypass'
 
-function isSupabaseConfigured() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
-  return Boolean(url) && !url.includes('your_') && url.startsWith('https://')
-}
-
-function normalizeCookieOptions(options?: Record<string, unknown>) {
-  const nextOptions = { ...(options ?? {}) }
-  if (process.env.NODE_ENV !== 'production') {
-    nextOptions.secure = false
-    if (!nextOptions.sameSite) nextOptions.sameSite = 'lax'
-  }
-  if (!nextOptions.path) nextOptions.path = '/'
-  return nextOptions
-}
-
+type CookieToSet = { name: string; value: string; options?: Record<string, unknown> }
 type SessionTokens = { access_token: string; refresh_token: string }
 type CookieEntry = { name: string; value: string }
 
@@ -51,7 +36,6 @@ function parseSessionTokens(value?: string): SessionTokens | null {
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate)
-
       if (
         parsed &&
         typeof parsed === 'object' &&
@@ -63,14 +47,12 @@ function parseSessionTokens(value?: string): SessionTokens | null {
           refresh_token: parsed.refresh_token,
         }
       }
-
       if (Array.isArray(parsed) && parsed.length >= 2) {
         const [accessToken, refreshToken] = parsed
         if (typeof accessToken === 'string' && typeof refreshToken === 'string') {
           return { access_token: accessToken, refresh_token: refreshToken }
         }
       }
-
       if (
         parsed &&
         typeof parsed === 'object' &&
@@ -115,11 +97,11 @@ function getAuthCookieValue(cookieList: CookieEntry[]) {
     grouped.set(name, group)
   })
 
-  for (const group of grouped.values()) {
+  for (const group of Array.from(grouped.values())) {
     if (group.chunks.length > 0) {
       const joined = group.chunks
-        .sort((a, b) => a.index - b.index)
-        .map((c) => c.value)
+        .sort((a: { index: number; value: string }, b: { index: number; value: string }) => a.index - b.index)
+        .map((c: { index: number; value: string }) => c.value)
         .join('')
       if (joined) return joined
     }
@@ -129,11 +111,12 @@ function getAuthCookieValue(cookieList: CookieEntry[]) {
   return undefined
 }
 
-export async function middleware(request: NextRequest) {
-  // Skip auth only when Supabase is not configured for this environment.
-  if (!isSupabaseConfigured()) return NextResponse.next()
+export async function GET(req: NextRequest) {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ error: 'Not available in production' }, { status: 404 })
+  }
 
-  let supabaseResponse = NextResponse.next({ request })
+  const pendingCookies: CookieToSet[] = []
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -141,69 +124,66 @@ export async function middleware(request: NextRequest) {
     {
       cookies: {
         getAll() {
-          return request.cookies.getAll()
+          return req.cookies.getAll()
         },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, normalizeCookieOptions(options))
-          )
+        setAll(cookiesToSet: CookieToSet[]) {
+          pendingCookies.push(...cookiesToSet)
         },
       },
     }
   )
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser()
+  try {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser()
 
-  let effectiveUser = user
+    let effectiveUser = user
+    let effectiveError = error
+    let hydratedFromCookie = false
 
-  if (!effectiveUser && userError?.message?.toLowerCase().includes('session missing')) {
-    const cookieValue = getAuthCookieValue(request.cookies.getAll())
-    const tokens = parseSessionTokens(cookieValue)
-    if (tokens) {
-      await supabase.auth.setSession(tokens)
-      const retried = await supabase.auth.getUser()
-      effectiveUser = retried.data.user ?? null
+    if (!effectiveUser && error?.message?.toLowerCase().includes('session missing')) {
+      const tokens = parseSessionTokens(getAuthCookieValue(req.cookies.getAll()))
 
-      if (!effectiveUser) {
-        const direct = await supabase.auth.getUser(tokens.access_token)
-        effectiveUser = direct.data.user ?? null
+      if (tokens) {
+        hydratedFromCookie = true
+        await supabase.auth.setSession(tokens)
+        const retry = await supabase.auth.getUser()
+        effectiveUser = retry.data.user ?? null
+        effectiveError = retry.error
+
+        if (!effectiveUser) {
+          const direct = await supabase.auth.getUser(tokens.access_token)
+          effectiveUser = direct.data.user ?? null
+          effectiveError = direct.error
+        }
       }
     }
+
+    const response = NextResponse.json({
+      authenticated: Boolean(effectiveUser),
+      user_id: effectiveUser?.id ?? null,
+      email: effectiveUser?.email ?? null,
+      auth_error: effectiveError?.message ?? null,
+      hydrated_from_cookie: hydratedFromCookie,
+      request_cookie_names: req.cookies.getAll().map((c) => c.name),
+      pending_set_cookie_names: pendingCookies.map((c) => c.name),
+      now: new Date().toISOString(),
+    })
+
+    pendingCookies.forEach(({ name, value, options }) => {
+      response.cookies.set(name, value, options)
+    })
+
+    return response
+  } catch (err: any) {
+    return NextResponse.json(
+      {
+        authenticated: false,
+        error: err?.message ?? 'Session debug failed',
+      },
+      { status: 500 }
+    )
   }
-
-  const { pathname } = request.nextUrl
-
-  // Protected routes
-  const protectedPaths = ['/dashboard', '/request', '/donor', '/tracking', '/notifications']
-  const isProtected = protectedPaths.some((p) => pathname.startsWith(p))
-  const isRequestPath = pathname.startsWith('/request')
-
-  if (!effectiveUser && isRequestPath) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/auth/login'
-    url.searchParams.set('redirect', pathname)
-    return NextResponse.redirect(url)
-  }
-
-  if (!effectiveUser && isProtected && !isDevAuthBypassEnabled()) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/auth/login'
-    url.searchParams.set('redirect', pathname)
-    return NextResponse.redirect(url)
-  }
-
-  return supabaseResponse
-}
-
-export const config = {
-  matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
-  ],
 }

@@ -1,61 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { resolveEffectiveUser } from '@/lib/auth/devBypass'
 import { BloodGroup } from '@/types'
 import { getCompatibleDonorGroups } from '@/lib/matching'
-
-// Demo donors for unauthorized/demo mode
-const DEMO_DONORS = [
-  {
-    donor_id: 'demo-1',
-    full_name: 'Arjun Mehta',
-    blood_group: 'O+' as BloodGroup,
-    trust_score: 92,
-    distance_km: 2.1,
-    estimated_minutes: 6,
-  },
-  {
-    donor_id: 'demo-2',
-    full_name: 'Priya Sharma',
-    blood_group: 'O+' as BloodGroup,
-    trust_score: 88,
-    distance_km: 4.5,
-    estimated_minutes: 11,
-  },
-  {
-    donor_id: 'demo-3',
-    full_name: 'Raj Kumar',
-    blood_group: 'O+' as BloodGroup,
-    trust_score: 95,
-    distance_km: 3.8,
-    estimated_minutes: 9,
-  },
-  {
-    donor_id: 'demo-4',
-    full_name: 'Kavya Patel',
-    blood_group: 'O+' as BloodGroup,
-    trust_score: 85,
-    distance_km: 5.2,
-    estimated_minutes: 14,
-  },
-  {
-    donor_id: 'demo-5',
-    full_name: 'Arun Singh',
-    blood_group: 'O+' as BloodGroup,
-    trust_score: 90,
-    distance_km: 6.1,
-    estimated_minutes: 17,
-  },
-]
 
 // GET /api/matching?blood_group=O+&hospital_lat=...&hospital_lng=...&radius=10
 export async function GET(req: NextRequest) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    
-    // Demo mode: return demo donors for unauthorized users
-    if (!user) {
-      return NextResponse.json({ donors: DEMO_DONORS, demo: true })
+    const effectiveUser = await resolveEffectiveUser(user)
+    if (!effectiveUser) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { searchParams } = new URL(req.url)
@@ -94,7 +50,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ donors: donors ?? [] })
   } catch (err: any) {
     console.error('[GET /api/matching]', err)
-    // Return demo donors on error instead of 500
-    return NextResponse.json({ donors: DEMO_DONORS, demo: true })
+    return NextResponse.json({ error: err.message ?? 'Failed to fetch donor matches' }, { status: 500 })
   }
 }

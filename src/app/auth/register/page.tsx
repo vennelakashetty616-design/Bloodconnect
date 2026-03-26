@@ -7,11 +7,9 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import toast from 'react-hot-toast'
 import { User, Mail, Phone, Lock, Droplet } from 'lucide-react'
-import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/Button'
 import { Input, Select } from '@/components/ui/Input'
-import { BLOOD_GROUPS, BloodGroup, Profile, Donor } from '@/types'
-import { useAppStore } from '@/store/appStore'
+import { BLOOD_GROUPS } from '@/types'
 
 const schema = z.object({
   full_name: z.string().min(2, 'Enter your full name'),
@@ -27,7 +25,6 @@ export default function RegisterPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<1 | 2>(1)
-  const { setUser, setDonor } = useAppStore()
 
   const { register, handleSubmit, watch, trigger, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -45,47 +42,6 @@ export default function RegisterPage() {
     setLoading(true)
     try {
       const normalizedEmail = data.email.trim().toLowerCase()
-
-      // Demo mode — skip Supabase auth entirely
-      if (!isSupabaseConfigured()) {
-        const now = new Date().toISOString()
-        const profile: Profile = {
-          id: `demo-${normalizedEmail}`,
-          full_name: data.full_name,
-          phone: data.phone,
-          email: normalizedEmail,
-          role: data.want_to_donate ? 'both' : 'requester',
-          created_at: now,
-          updated_at: now,
-        }
-
-        setUser(profile)
-        localStorage.setItem('fuellife_demo_profile_current', JSON.stringify(profile))
-        localStorage.setItem(`fuellife_demo_profile_${normalizedEmail}`, JSON.stringify(profile))
-  localStorage.setItem(`fuellife_demo_profile_setup_${normalizedEmail}`, 'false')
-
-        if (data.want_to_donate) {
-          const donor: Donor = {
-            id: `demo-donor-${normalizedEmail}`,
-            user_id: profile.id,
-            blood_group: data.blood_group as BloodGroup,
-            last_donation_date: null,
-            is_available: true,
-            latitude: null,
-            longitude: null,
-            trust_score: 88,
-            total_donations: 3,
-            response_rate: 0.92,
-            response_history: [],
-            created_at: now,
-          }
-          setDonor(donor)
-        }
-
-        toast.success('Welcome! 🩸')
-        router.push('/auth/profile-setup?redirect=/dashboard')
-        return
-      }
 
       // Use server-side API endpoint to sign up and establish auth cookies
       console.log('[register] Calling /api/auth/register with:', { email: normalizedEmail, full_name: data.full_name })

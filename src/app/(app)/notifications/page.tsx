@@ -20,64 +20,6 @@ const TYPE_ICONS: Record<string, string> = {
   emergency: '🚑',
 }
 
-const DEMO_NOTIFICATIONS: Notification[] = [
-  {
-    id: 'demo-notif-1',
-    user_id: 'demo-test',
-    type: 'blood_request',
-    title: 'O+ Blood Needed Urgently',
-    body: 'City Care Hospital needs O+ donor. 2 units required for trauma patient. Respond now to save a life.',
-    related_request_id: 'demo-1',
-    is_read: false,
-    created_at: '2026-03-13T14:32:00.000Z',
-    updated_at: '2026-03-13T14:32:00.000Z',
-  },
-  {
-    id: 'demo-notif-2',
-    user_id: 'demo-test',
-    type: 'donor_accepted',
-    title: 'Your Donation Request Accepted',
-    body: 'A verified donor has accepted your blood request for A- at Sunrise Multispeciality.',
-    related_request_id: 'demo-2',
-    is_read: false,
-    created_at: '2026-03-13T13:15:00.000Z',
-    updated_at: '2026-03-13T13:15:00.000Z',
-  },
-  {
-    id: 'demo-notif-3',
-    user_id: 'demo-test',
-    type: 'in_transit',
-    title: 'Donor is on the Way',
-    body: 'Your verified donor is now on transit to St. Mercy General. ETA: 12 minutes.',
-    related_request_id: 'demo-3',
-    is_read: true,
-    created_at: '2026-03-13T12:45:00.000Z',
-    updated_at: '2026-03-13T12:45:00.000Z',
-  },
-  {
-    id: 'demo-notif-4',
-    user_id: 'demo-test',
-    type: 'arrived',
-    title: 'Donor Arrived at Hospital',
-    body: 'The verified donor has arrived at the collection center. Collection will begin shortly.',
-    related_request_id: 'demo-1',
-    is_read: true,
-    created_at: '2026-03-12T18:30:00.000Z',
-    updated_at: '2026-03-12T18:30:00.000Z',
-  },
-  {
-    id: 'demo-notif-5',
-    user_id: 'demo-test',
-    type: 'completed',
-    title: 'Blood Donation Completed',
-    body: 'Thank you for donating! Your contribution has helped save a life. Rest well and hydrate.',
-    related_request_id: 'demo-2',
-    is_read: true,
-    created_at: '2026-03-11T16:20:00.000Z',
-    updated_at: '2026-03-11T16:20:00.000Z',
-  },
-]
-
 export default function NotificationsPage() {
   const { user } = useAuth()
   const { setUnreadCount } = useAppStore()
@@ -94,8 +36,7 @@ export default function NotificationsPage() {
       .order('created_at', { ascending: false })
       .limit(50)
     
-    // Show demo notifications if no real data
-    const notifs = (data as Notification[]) ?? DEMO_NOTIFICATIONS
+    const notifs = (data as Notification[]) ?? []
     setNotifications(notifs)
     setUnreadCount(0)
     setLoading(false)

@@ -31,50 +31,12 @@ type BasicProfileSetup = {
   last_donation_date: string
 }
 
-const DEMO_DONATION_LOG: DonationLog[] = [
-  {
-    id: 'donation-1',
-    donatedAt: '2026-02-18T10:30:00.000Z',
-    hospital: 'City Care Hospital',
-    recipient: 'Rahul Verma',
-    units: 1,
-  },
-  {
-    id: 'donation-2',
-    donatedAt: '2025-12-02T14:05:00.000Z',
-    hospital: 'St. Mercy General',
-    recipient: 'Aisha Khan',
-    units: 2,
-  },
-  {
-    id: 'donation-3',
-    donatedAt: '2025-09-21T09:15:00.000Z',
-    hospital: 'Sunrise Multispeciality',
-    recipient: 'Vikram Nair',
-    units: 1,
-  },
-]
-
 export default function DonorProfilePage() {
   const { user, donor, signOut } = useAuth()
   const [toggling, setToggling] = useState(false)
   const [updatingLocation, setUpdatingLocation] = useState(false)
   const [isAvailable, setIsAvailable] = useState(donor?.is_available ?? true)
   const [basicSetup, setBasicSetup] = useState<BasicProfileSetup | null>(null)
-
-  const isDemoSession = () => {
-    if (typeof window === 'undefined') return false
-    return document.cookie.includes('demo_mode=true') || localStorage.getItem('demo_mode') === 'true'
-  }
-
-  const getDemoEmailKey = () => {
-    if (typeof window === 'undefined') return (user?.email ?? '').trim().toLowerCase()
-    const fromStore = (user?.email ?? '').trim().toLowerCase()
-    const currentRaw = localStorage.getItem('fuellife_demo_profile_current')
-    const current = currentRaw ? JSON.parse(currentRaw) as Partial<{ email: string }> : null
-    const fromCurrent = (current?.email ?? '').trim().toLowerCase()
-    return fromStore || fromCurrent || 'test@fuellife.com'
-  }
 
   useEffect(() => {
     if (donor) setIsAvailable(donor.is_available)
@@ -84,17 +46,7 @@ export default function DonorProfilePage() {
     let isMounted = true
 
     async function loadBasicSetup() {
-      if (!user && !isDemoSession()) return
-
-      if (isDemoSession()) {
-        const emailKey = getDemoEmailKey()
-        const setupRaw = localStorage.getItem(`fuellife_demo_profile_setup_data_${emailKey}`)
-        if (setupRaw) {
-          const setup = JSON.parse(setupRaw) as BasicProfileSetup
-          if (isMounted) setBasicSetup(setup)
-        }
-        return
-      }
+      if (!user) return
 
       try {
         const res = await fetch('/api/auth/profile')
@@ -155,7 +107,8 @@ export default function DonorProfilePage() {
     : null
   const eligibleAgain = daysSinceDonation !== null ? Math.max(0, 56 - daysSinceDonation) : 0
   const isEligible = daysSinceDonation === null || daysSinceDonation >= 56
-  const totalUnitsDonated = DEMO_DONATION_LOG.reduce((sum, item) => sum + item.units, 0)
+  const totalUnitsDonated = donor?.total_donations ?? 0
+  const donationLog: DonationLog[] = []
   const displayName = user?.full_name?.trim() || user?.email?.split('@')[0] || 'Hero Donor'
 
   return (
@@ -308,7 +261,7 @@ export default function DonorProfilePage() {
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-black text-gray-900">Donation Journey</h3>
             <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-red-700">
-              {donor?.total_donations ?? DEMO_DONATION_LOG.length} donations
+              {donor?.total_donations ?? 0} donations
             </span>
           </div>
 
@@ -318,7 +271,7 @@ export default function DonorProfilePage() {
           </div>
 
           <div className="space-y-2.5">
-            {DEMO_DONATION_LOG.map((entry, index) => (
+            {donationLog.length > 0 ? donationLog.map((entry, index) => (
               <motion.div
                 key={entry.id}
                 initial={{ opacity: 0, y: 6 }}
@@ -352,7 +305,11 @@ export default function DonorProfilePage() {
                   </div>
                 </div>
               </motion.div>
-            ))}
+            )) : (
+              <div className="rounded-xl border border-gray-100 p-3 text-xs text-gray-500">
+                Donation records will appear here after completed donations.
+              </div>
+            )}
           </div>
         </Card>
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { isDevAuthBypassEnabled, resolveEffectiveUser } from '@/lib/auth/devBypass'
 import { UpdateDonorLocationPayload } from '@/types'
 
 // POST /api/tracking – donor pushes new location
@@ -7,7 +8,8 @@ export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const effectiveUser = await resolveEffectiveUser(user)
+    if (!effectiveUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body: UpdateDonorLocationPayload = await req.json()
 
@@ -16,12 +18,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify user owns this donor profile
-    const { data: donor } = await supabase
+    let donorQuery = supabase
       .from('donors')
       .select('id, user_id')
       .eq('id', body.donor_id)
-      .eq('user_id', user.id)
-      .single()
+
+    if (!isDevAuthBypassEnabled()) {
+      donorQuery = donorQuery.eq('user_id', effectiveUser.id)
+    }
+
+    const { data: donor } = await donorQuery.single()
 
     if (!donor) {
       return NextResponse.json({ error: 'Donor not found or unauthorized' }, { status: 403 })

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { isDevAuthBypassEnabled, resolveEffectiveUser } from '@/lib/auth/devBypass'
+import { createAdminClient } from '@/lib/supabase/server'
 
 type Gender = 'male' | 'female' | 'other' | 'prefer_not_to_say'
 
@@ -12,22 +14,52 @@ function normalizeGender(value: unknown): Gender | null {
   return null
 }
 
+function isMissingTableError(err: any, table: string) {
+  const msg = String(err?.message ?? '').toLowerCase()
+  return (
+    msg.includes(`could not find the table 'public.${table}'`) ||
+    msg.includes(`relation \"${table}\" does not exist`) ||
+    err?.code === 'PGRST205' ||
+    err?.code === '42P01'
+  )
+}
+
 export async function GET() {
   try {
     const supabase = await createClient()
     const { data: { user }, error: userError } = await supabase.auth.getUser()
-    if (userError) throw userError
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const effectiveUser = await resolveEffectiveUser(user)
+    if (!effectiveUser) {
+      if (userError) throw userError
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-    const meta = user.user_metadata ?? {}
+    let effectiveMetadata = effectiveUser.user_metadata ?? {}
+    if (isDevAuthBypassEnabled()) {
+      try {
+        const admin = createAdminClient()
+        const { data: authUserData } = await admin.auth.admin.getUserById(effectiveUser.id)
+        if (authUserData?.user?.user_metadata) {
+          effectiveMetadata = authUserData.user.user_metadata as Record<string, unknown>
+        }
+      } catch {
+        // Ignore metadata refresh errors and use available session metadata.
+      }
+    }
+
+    const meta = effectiveMetadata
     const setup = (meta.basic_profile_setup ?? null) as Record<string, unknown> | null
     const completed = Boolean(meta.basic_profile_setup_completed)
 
-    const { data: donor } = await supabase
+    const { data: donor, error: donorErr } = await supabase
       .from('donors')
       .select('blood_group, last_donation_date')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUser.id)
       .maybeSingle()
+
+    if (donorErr && !isMissingTableError(donorErr, 'donors')) {
+      throw donorErr
+    }
 
     return NextResponse.json({
       completed,
@@ -51,7 +83,8 @@ export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const effectiveUser = await resolveEffectiveUser(user)
+    if (!effectiveUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await req.json()
     const normalizedGender = normalizeGender(body.gender)
@@ -67,30 +100,41 @@ export async function POST(req: NextRequest) {
       ? body.last_donation_date
       : null
 
-    const { data: existingProfile } = await supabase
+    const { data: existingProfile, error: existingProfileErr } = await supabase
       .from('profiles')
       .select('full_name, phone, role')
-      .eq('id', user.id)
+      .eq('id', effectiveUser.id)
       .maybeSingle()
 
+    if (existingProfileErr && !isMissingTableError(existingProfileErr, 'profiles')) {
+      throw existingProfileErr
+    }
+
     const metadataName =
-      (user.user_metadata?.full_name as string | undefined) ||
-      (user.user_metadata?.name as string | undefined) ||
-      user.email?.split('@')[0] ||
+      (effectiveUser.user_metadata?.full_name as string | undefined) ||
+      (effectiveUser.user_metadata?.name as string | undefined) ||
+      effectiveUser.email?.split('@')[0] ||
       'User'
 
     const baseProfile = {
-      id: user.id,
+      id: effectiveUser.id,
       full_name: body.full_name || existingProfile?.full_name || metadataName,
       phone: body.phone || existingProfile?.phone || '',
-      email: user.email!,
+      email: effectiveUser.email || '',
       role: body.role ?? existingProfile?.role ?? 'both',
     }
 
     // Save required profile fields first so setup works even if optional DB columns are not present.
+    let savedProfile: any = null
     const { data, error } = await supabase.from('profiles').upsert(baseProfile).select().single()
-
-    if (error) throw error
+    if (error) {
+      if (!isMissingTableError(error, 'profiles')) {
+        throw error
+      }
+      savedProfile = baseProfile
+    } else {
+      savedProfile = data
+    }
 
     const optionalProfileUpdate: Record<string, unknown> = {
       date_of_birth: normalizedDob,
@@ -104,9 +148,9 @@ export async function POST(req: NextRequest) {
     const { error: optionalProfileErr } = await supabase
       .from('profiles')
       .update(optionalProfileUpdate)
-      .eq('id', user.id)
+      .eq('id', effectiveUser.id)
 
-    if (optionalProfileErr) {
+    if (optionalProfileErr && !isMissingTableError(optionalProfileErr, 'profiles')) {
       console.warn('[api/auth/profile] Optional profile column update skipped:', optionalProfileErr.message)
     }
 
@@ -114,13 +158,13 @@ export async function POST(req: NextRequest) {
       const { error: donorErr } = await supabase
         .from('donors')
         .upsert({
-          user_id: user.id,
+          user_id: effectiveUser.id,
           blood_group: normalizedBloodGroup,
           last_donation_date: normalizedLastDonationDate,
           is_available: true,
         }, { onConflict: 'user_id' })
 
-      if (donorErr) {
+      if (donorErr && !isMissingTableError(donorErr, 'donors')) {
         console.warn('[api/auth/profile] Donor update skipped:', donorErr.message)
       }
     }
@@ -135,19 +179,38 @@ export async function POST(req: NextRequest) {
       last_donation_date: normalizedLastDonationDate,
     }
 
-    const { error: metadataErr } = await supabase.auth.updateUser({
-      data: {
-        ...(user.user_metadata ?? {}),
-        basic_profile_setup_completed: true,
-        basic_profile_setup: setupPayload,
-      },
-    })
+    if (user) {
+      const { error: metadataErr } = await supabase.auth.updateUser({
+        data: {
+          ...(user.user_metadata ?? {}),
+          basic_profile_setup_completed: true,
+          basic_profile_setup: setupPayload,
+        },
+      })
 
-    if (metadataErr) {
-      console.warn('[api/auth/profile] Metadata update skipped:', metadataErr.message)
+      if (metadataErr) {
+        console.warn('[api/auth/profile] Metadata update skipped:', metadataErr.message)
+      }
+    } else {
+      // Dev-bypass fallback: no session user, so write metadata via admin API.
+      try {
+        const admin = createAdminClient()
+        const { error: adminMetaErr } = await admin.auth.admin.updateUserById(effectiveUser.id, {
+          user_metadata: {
+            ...(effectiveUser.user_metadata ?? {}),
+            basic_profile_setup_completed: true,
+            basic_profile_setup: setupPayload,
+          },
+        })
+        if (adminMetaErr) {
+          console.warn('[api/auth/profile] Admin metadata update skipped:', adminMetaErr.message)
+        }
+      } catch (adminErr: any) {
+        console.warn('[api/auth/profile] Admin metadata update failed:', adminErr?.message ?? adminErr)
+      }
     }
 
-    return NextResponse.json({ profile: data })
+    return NextResponse.json({ profile: savedProfile })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

@@ -9,12 +9,10 @@ import toast from 'react-hot-toast'
 import { CalendarDays, MapPin, Scale, UserRound } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input, Select } from '@/components/ui/Input'
-import { isSupabaseConfigured } from '@/lib/supabase/client'
 import { useAppStore } from '@/store/appStore'
-import { BLOOD_GROUPS, Profile } from '@/types'
+import { BLOOD_GROUPS } from '@/types'
 
 const BLOOD_GROUP_OPTIONS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as const
-const DEFAULT_DEMO_EMAIL = 'test@fuellife.com'
 
 const schema = z.object({
   date_of_birth: z.string().min(1, 'Date of birth is required'),
@@ -32,27 +30,9 @@ export default function ProfileSetupPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const redirect = searchParams.get('redirect') ?? '/dashboard'
-  const { user, setUser } = useAppStore()
+  const { user } = useAppStore()
   const [loading, setLoading] = useState(false)
   const [prefillLoading, setPrefillLoading] = useState(true)
-
-  const isDemoSession = () => {
-    if (typeof window === 'undefined') return false
-    return document.cookie.includes('demo_mode=true') || localStorage.getItem('demo_mode') === 'true'
-  }
-
-  const getDemoContext = () => {
-    const fromStore = (user?.email ?? '').trim().toLowerCase()
-    const storedCurrentRaw = typeof window !== 'undefined' ? localStorage.getItem('fuellife_demo_profile_current') : null
-    const storedCurrent = storedCurrentRaw ? JSON.parse(storedCurrentRaw) as Partial<Profile> : null
-    const fromStorage = (storedCurrent?.email ?? '').trim().toLowerCase()
-    const emailKey = fromStore || fromStorage || DEFAULT_DEMO_EMAIL
-
-    return {
-      emailKey,
-      currentProfile: storedCurrent,
-    }
-  }
 
   const {
     register,
@@ -75,23 +55,6 @@ export default function ProfileSetupPage() {
     let isMounted = true
 
     async function loadSetup() {
-      if (!isSupabaseConfigured() || isDemoSession()) {
-        const { emailKey } = getDemoContext()
-        const setupRaw = emailKey ? localStorage.getItem(`fuellife_demo_profile_setup_data_${emailKey}`) : null
-        if (setupRaw) {
-          const setup = JSON.parse(setupRaw) as Record<string, unknown>
-          if (setup.date_of_birth) setValue('date_of_birth', String(setup.date_of_birth))
-          if (setup.gender) setValue('gender', String(setup.gender) as FormData['gender'])
-          if (setup.weight_kg) setValue('weight_kg', Number(setup.weight_kg))
-          if (setup.blood_group) setValue('blood_group', String(setup.blood_group) as FormData['blood_group'])
-          if (setup.city) setValue('city', String(setup.city))
-          if (setup.pincode) setValue('pincode', String(setup.pincode))
-          if (setup.last_donation_date) setValue('last_donation_date', String(setup.last_donation_date))
-        }
-        setPrefillLoading(false)
-        return
-      }
-
       try {
         const res = await fetch('/api/auth/profile', { method: 'GET' })
         if (!res.ok) {
@@ -133,47 +96,6 @@ export default function ProfileSetupPage() {
   async function onSubmit(data: FormData) {
     setLoading(true)
     try {
-      if (!isSupabaseConfigured() || isDemoSession()) {
-        const { emailKey, currentProfile } = getDemoContext()
-
-        const payload = {
-          date_of_birth: data.date_of_birth,
-          gender: data.gender,
-          weight_kg: data.weight_kg,
-          blood_group: data.blood_group,
-          city: data.city.trim(),
-          pincode: data.pincode.trim(),
-          last_donation_date: data.last_donation_date || null,
-        }
-
-        localStorage.setItem(`fuellife_demo_profile_setup_${emailKey}`, 'true')
-        localStorage.setItem(`fuellife_demo_profile_setup_data_${emailKey}`, JSON.stringify(payload))
-
-        const now = new Date().toISOString()
-        const updatedUser: Profile = {
-          id: (user?.id || currentProfile?.id || `demo-${emailKey}`) as string,
-          full_name: (user?.full_name || currentProfile?.full_name || emailKey.split('@')[0]) as string,
-          phone: (user?.phone || currentProfile?.phone || '+91 9876543210') as string,
-          email: emailKey,
-          role: (user?.role || currentProfile?.role || 'both') as Profile['role'],
-          created_at: (user?.created_at || currentProfile?.created_at || now) as string,
-          updated_at: now,
-          basic_profile_setup_completed: true,
-          date_of_birth: payload.date_of_birth,
-          gender: payload.gender,
-          weight_kg: payload.weight_kg,
-          city: payload.city,
-          pincode: payload.pincode,
-        }
-        setUser(updatedUser)
-        localStorage.setItem('fuellife_demo_profile_current', JSON.stringify(updatedUser))
-        localStorage.setItem(`fuellife_demo_profile_${emailKey}`, JSON.stringify(updatedUser))
-
-        toast.success('Profile setup completed')
-        router.replace(redirect)
-        return
-      }
-
       const res = await fetch('/api/auth/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

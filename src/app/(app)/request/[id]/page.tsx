@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { BloodGroupBadge } from '@/components/ui/Badge'
 import { HeartbeatIcon } from '@/components/ui/HeartbeatIcon'
-import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase/client'
+import { getSupabaseClient } from '@/lib/supabase/client'
 import { useRealTimeTracking } from '@/hooks/useTracking'
 import { estimateMinutes, haversineDistance } from '@/lib/matching'
 import type { BloodRequest, RequestStatus, VehicleType } from '@/types'
@@ -32,13 +32,6 @@ const TrackingMap = dynamic(() => import('@/components/map/TrackingMap'), { ssr:
 
 type UiStatus = 'searching' | 'found' | 'enroute' | 'completed'
 type TransportChoice = VehicleType | 'self'
-
-type DonorSummary = {
-  name: string
-  phone: string
-  trustScore: number
-  verified: boolean
-}
 
 type RideDraft = {
   pickupLat: number
@@ -65,22 +58,10 @@ type RideBooked = {
   dropLng: number
 }
 
-const DEMO_DONOR: DonorSummary = {
-  name: 'Donor A-482',
-  phone: '+91 98******21',
-  trustScore: 85,
-  verified: true,
-}
-
-const DEMO_DRIVERS: Record<VehicleType, { name: string; vehicleNumber: string }> = {
-  bike: { name: 'Rajesh', vehicleNumber: 'TS09BK4121' },
-  cab: { name: 'Anita', vehicleNumber: 'TS09CB2290' },
-}
-
 function getUiStatus(status: RequestStatus): UiStatus {
   if (status === 'completed') return 'completed'
-  if (status === 'in_transit' || status === 'arrived') return 'enroute'
-  if (status === 'matched' || status === 'accepted') return 'found'
+  if (status === 'en_route' || status === 'in_transit' || status === 'arrived' || status === 'donation_in_progress') return 'enroute'
+  if (status === 'matched' || status === 'accepted' || status === 'donor_committed') return 'found'
   return 'searching'
 }
 
@@ -118,13 +99,6 @@ function moveToward(current: number, target: number, ratio: number) {
   return current + (target - current) * ratio
 }
 
-function offsetNear(lat: number, lng: number) {
-  return {
-    lat: lat + (Math.random() - 0.5) * 0.02,
-    lng: lng + (Math.random() - 0.5) * 0.02,
-  }
-}
-
 export default function RequestStatusPage() {
   const params = useParams()
   const id = params.id as string
@@ -134,11 +108,6 @@ export default function RequestStatusPage() {
   const [unitsUpdating, setUnitsUpdating] = useState(false)
   const [now, setNow] = useState(Date.now())
 
-  const [demoDonorLoc, setDemoDonorLoc] = useState<{ lat: number; lng: number } | null>(null)
-  const [demoDistanceKm, setDemoDistanceKm] = useState<number | null>(null)
-  const [demoEtaMinutes, setDemoEtaMinutes] = useState<number | null>(null)
-  const [demoLastUpdated, setDemoLastUpdated] = useState<string>('')
-
   const [transportChoice, setTransportChoice] = useState<TransportChoice | null>(null)
   const [showRideModal, setShowRideModal] = useState(false)
   const [rideDraft, setRideDraft] = useState<RideDraft | null>(null)
@@ -147,10 +116,8 @@ export default function RequestStatusPage() {
 
   const rideStatusRef = useRef<RideBooked['status'] | null>(null)
 
-  const isDemo = id?.startsWith('demo-') || !isSupabaseConfigured()
-
   const { donorLoc, distanceKm, etaMinutes } = useRealTimeTracking(
-    request && ['accepted', 'in_transit', 'arrived', 'completed'].includes(request.status) ? id : null,
+    request && ['donor_committed', 'accepted', 'en_route', 'in_transit', 'donation_in_progress', 'arrived', 'completed'].includes(request.status) ? id : null,
     request?.hospital_lat ?? 0,
     request?.hospital_lng ?? 0
   )
@@ -167,47 +134,6 @@ export default function RequestStatusPage() {
 
     async function loadRequest() {
       setLoading(true)
-      if (isDemo) {
-        try {
-          const raw = localStorage.getItem('fuellife_active_request')
-          if (raw) {
-            const parsed = JSON.parse(raw) as BloodRequest
-            if (!cancelled) {
-              setRequest({
-                ...parsed,
-                id,
-                status: parsed.status ?? 'pending',
-                expires_at: parsed.expires_at ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-              })
-            }
-          } else if (!cancelled) {
-            setRequest({
-              id,
-              requester_id: 'demo-user',
-              blood_group: 'O+',
-              hospital_name: 'Patient: R.K.',
-              hospital_address: 'Hyderabad',
-              hospital_lat: 17.385,
-              hospital_lng: 78.4867,
-              requester_lat: 17.385,
-              requester_lng: 78.4867,
-              contact_number: '+91 9876543210',
-              units_needed: 2,
-              urgency: 'priority',
-              status: 'pending',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-            } as BloodRequest)
-          }
-        } catch {
-          if (!cancelled) toast.error('Could not load request data')
-        } finally {
-          if (!cancelled) setLoading(false)
-        }
-        return
-      }
-
       try {
         const res = await fetch(`/api/requests/${id}`)
         const json = await res.json()
@@ -221,86 +147,24 @@ export default function RequestStatusPage() {
     }
 
     loadRequest()
-
-    if (!isDemo) {
-      const supabase = getSupabaseClient()
-      const channel = supabase
-        .channel(`request-status:${id}`)
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'blood_requests', filter: `id=eq.${id}` },
-          (payload) => {
-            const nextStatus = payload.new.status as RequestStatus
-            setRequest((prev) => (prev ? { ...prev, ...payload.new, status: nextStatus } : prev))
-          }
-        )
-        .subscribe()
-
-      return () => {
-        cancelled = true
-        supabase.removeChannel(channel)
-      }
-    }
+    const supabase = getSupabaseClient()
+    const channel = supabase
+      .channel(`request-status:${id}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'blood_requests', filter: `id=eq.${id}` },
+        (payload) => {
+          const nextStatus = payload.new.status as RequestStatus
+          setRequest((prev) => (prev ? { ...prev, ...payload.new, status: nextStatus } : prev))
+        }
+      )
+      .subscribe()
 
     return () => {
       cancelled = true
+      supabase.removeChannel(channel)
     }
-  }, [id, isDemo])
-
-  useEffect(() => {
-    if (!isDemo || !request) return
-
-    let flowTimer: ReturnType<typeof setTimeout> | null = null
-    const current = request.status
-
-    if (current === 'pending') {
-      flowTimer = setTimeout(() => {
-        setRequest((prev) => (prev ? { ...prev, status: 'matched' } : prev))
-      }, 6000)
-    }
-
-    if (current === 'matched') {
-      flowTimer = setTimeout(() => {
-        setRequest((prev) => (prev ? { ...prev, status: 'accepted' } : prev))
-      }, 4000)
-    }
-
-    if (current === 'accepted') {
-      flowTimer = setTimeout(() => {
-        setRequest((prev) => (prev ? { ...prev, status: 'in_transit' } : prev))
-      }, 4000)
-    }
-
-    return () => {
-      if (flowTimer) clearTimeout(flowTimer)
-    }
-  }, [isDemo, request?.status])
-
-  useEffect(() => {
-    if (!isDemo || !request) return
-    if (!['accepted', 'in_transit', 'arrived'].includes(request.status)) return
-
-    let distance = demoDistanceKm ?? 5.4
-    const interval = setInterval(() => {
-      distance = Math.max(0.1, distance - 0.22)
-      const eta = Math.max(1, Math.round((distance / 30) * 60))
-
-      setDemoDistanceKm(parseFloat(distance.toFixed(1)))
-      setDemoEtaMinutes(eta)
-      setDemoLastUpdated(new Date().toISOString())
-      setDemoDonorLoc({
-        lat: (request.hospital_lat ?? 0) + distance * 0.002,
-        lng: (request.hospital_lng ?? 0) + distance * 0.002,
-      })
-
-      if (distance <= 0.2) {
-        setRequest((prev) => (prev ? { ...prev, status: 'completed' } : prev))
-        clearInterval(interval)
-      }
-    }, 4000)
-
-    return () => clearInterval(interval)
-  }, [isDemo, request?.status, request?.hospital_lat, request?.hospital_lng])
+  }, [id])
 
   useEffect(() => {
     if (!rideBooked) return
@@ -382,26 +246,23 @@ export default function RequestStatusPage() {
   }, [request?.expires_at, now])
 
   const totalUnits = request?.units_needed ?? 1
-  const fulfilledUnits = request && ['accepted', 'in_transit', 'arrived', 'completed'].includes(request.status) ? 1 : 0
+  const fulfilledUnits = request && ['donor_committed', 'accepted', 'en_route', 'in_transit', 'donation_in_progress', 'arrived', 'completed'].includes(request.status) ? 1 : 0
   const progressPct = Math.min(100, Math.round((fulfilledUnits / Math.max(1, totalUnits)) * 100))
 
-  const showDonorSection = Boolean(request && ['accepted', 'in_transit', 'arrived', 'completed'].includes(request.status))
+  const showDonorSection = Boolean(request && ['donor_committed', 'accepted', 'en_route', 'in_transit', 'donation_in_progress', 'arrived', 'completed'].includes(request.status))
   const showMap = Boolean(request && uiStatus !== 'searching')
-  const transportEligible = Boolean(request && (request.status === 'accepted' || request.status === 'in_transit'))
+  const transportEligible = Boolean(request && ['donor_committed', 'accepted', 'en_route', 'in_transit'].includes(request.status))
 
-  const donorName = request?.accepted_donor?.profile?.full_name || DEMO_DONOR.name
-  const donorPhoneRaw = request?.accepted_donor?.profile?.phone || DEMO_DONOR.phone
+  const donorName = request?.accepted_donor?.profile?.full_name || 'Assigned donor'
+  const donorPhoneRaw = request?.accepted_donor?.profile?.phone || ''
   const donorPhoneMasked = maskPhone(donorPhoneRaw)
-  const donorTrust = request?.accepted_donor?.trust_score ?? DEMO_DONOR.trustScore
-  const donorVerified = request?.accepted_donor ? true : DEMO_DONOR.verified
+  const donorTrust = request?.accepted_donor?.trust_score ?? 0
+  const donorVerified = Boolean(request?.accepted_donor)
 
-  const effectiveDonorLoc = demoDonorLoc ?? donorLoc
-  const effectiveDistance = demoDistanceKm ?? distanceKm
-  const effectiveEta = demoEtaMinutes ?? etaMinutes
-
-  const lastUpdatedText = demoLastUpdated
-    ? new Date(demoLastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : 'Live'
+  const effectiveDonorLoc = donorLoc
+  const effectiveDistance = distanceKm
+  const effectiveEta = etaMinutes
+  const lastUpdatedText = 'Live'
 
   const donorPickup = useMemo(() => {
     const donorLat = effectiveDonorLoc?.lat ?? request?.accepted_donor?.latitude ?? request?.requester_lat ?? request?.hospital_lat
@@ -420,12 +281,6 @@ export default function RequestStatusPage() {
   async function cancelRequest() {
     if (!request) return
 
-    if (isDemo) {
-      setRequest({ ...request, status: 'cancelled' })
-      toast.success('Request cancelled')
-      return
-    }
-
     try {
       const res = await fetch(`/api/requests/${request.id}`, { method: 'DELETE' })
       const json = await res.json()
@@ -443,12 +298,6 @@ export default function RequestStatusPage() {
 
     if (nextUnits === (request.units_needed ?? 1)) {
       toast('Maximum 10 units allowed for a single request')
-      return
-    }
-
-    if (isDemo) {
-      setRequest({ ...request, units_needed: nextUnits })
-      toast.success(`Updated to ${nextUnits} units`)
       return
     }
 
@@ -523,92 +372,54 @@ export default function RequestStatusPage() {
 
   async function confirmRide() {
     if (!request || !rideDraft || !transportChoice || transportChoice === 'self') return
-    setRideLoading(true)
-
-    const driverMeta = DEMO_DRIVERS[transportChoice]
-    const start = offsetNear(rideDraft.pickupLat, rideDraft.pickupLng)
-    const toPickupKm = haversineDistance(start.lat, start.lng, rideDraft.pickupLat, rideDraft.pickupLng)
-
-    if (!isDemo && request.accepted_donor_id) {
-      try {
-        const res = await fetch('/api/vehicles', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            request_id: request.id,
-            donor_id: request.accepted_donor_id,
-            vehicle_type: transportChoice,
-            pickup_address: 'Donor live location',
-            pickup_lat: rideDraft.pickupLat,
-            pickup_lng: rideDraft.pickupLng,
-          }),
-        })
-        const json = await res.json()
-        if (!res.ok) throw new Error(json.error || 'Ride booking failed')
-
-        const booking = json.booking
-        setRideBooked({
-          trackingId: booking.id,
-          vehicleType: booking.vehicle_type,
-          driverName: booking.driver_name,
-          vehicleNumber: booking.vehicle_number,
-          etaToPickupMin: estimateMinutes(
-            haversineDistance(booking.driver_lat, booking.driver_lng, rideDraft.pickupLat, rideDraft.pickupLng),
-            transportChoice === 'bike' ? 35 : 25
-          ),
-          linkedDonorId: request.accepted_donor_id ?? null,
-          status: 'to_pickup',
-          driverLat: booking.driver_lat,
-          driverLng: booking.driver_lng,
-          pickupLat: rideDraft.pickupLat,
-          pickupLng: rideDraft.pickupLng,
-          dropLat: rideDraft.dropLat,
-          dropLng: rideDraft.dropLng,
-        })
-        toast.success('Ride booked successfully')
-      } catch (err: any) {
-        toast.error(err.message || 'Unable to book vehicle. Using fallback simulation.')
-        setRideBooked({
-          trackingId: `SIM-${Date.now()}`,
-          vehicleType: transportChoice,
-          driverName: driverMeta.name,
-          vehicleNumber: driverMeta.vehicleNumber,
-          etaToPickupMin: estimateMinutes(toPickupKm, transportChoice === 'bike' ? 35 : 25),
-          linkedDonorId: request.accepted_donor_id ?? null,
-          status: 'to_pickup',
-          driverLat: start.lat,
-          driverLng: start.lng,
-          pickupLat: rideDraft.pickupLat,
-          pickupLng: rideDraft.pickupLng,
-          dropLat: rideDraft.dropLat,
-          dropLng: rideDraft.dropLng,
-        })
-      } finally {
-        setShowRideModal(false)
-        setRideLoading(false)
-      }
+    if (!request.accepted_donor_id) {
+      toast.error('Cannot arrange ride until a donor is assigned.')
       return
     }
+    setRideLoading(true)
 
-    setRideBooked({
-      trackingId: `SIM-${Date.now()}`,
-      vehicleType: transportChoice,
-      driverName: driverMeta.name,
-      vehicleNumber: driverMeta.vehicleNumber,
-      etaToPickupMin: estimateMinutes(toPickupKm, transportChoice === 'bike' ? 35 : 25),
-      linkedDonorId: request.accepted_donor_id ?? null,
-      status: 'to_pickup',
-      driverLat: start.lat,
-      driverLng: start.lng,
-      pickupLat: rideDraft.pickupLat,
-      pickupLng: rideDraft.pickupLng,
-      dropLat: rideDraft.dropLat,
-      dropLng: rideDraft.dropLng,
-    })
+    try {
+      const res = await fetch('/api/vehicles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request_id: request.id,
+          donor_id: request.accepted_donor_id,
+          vehicle_type: transportChoice,
+          pickup_address: 'Donor live location',
+          pickup_lat: rideDraft.pickupLat,
+          pickup_lng: rideDraft.pickupLng,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Ride booking failed')
 
-    setShowRideModal(false)
-    setRideLoading(false)
-    toast.success('Ride booked successfully')
+      const booking = json.booking
+      setRideBooked({
+        trackingId: booking.id,
+        vehicleType: booking.vehicle_type,
+        driverName: booking.driver_name,
+        vehicleNumber: booking.vehicle_number,
+        etaToPickupMin: estimateMinutes(
+          haversineDistance(booking.driver_lat, booking.driver_lng, rideDraft.pickupLat, rideDraft.pickupLng),
+          transportChoice === 'bike' ? 35 : 25
+        ),
+        linkedDonorId: request.accepted_donor_id ?? null,
+        status: 'to_pickup',
+        driverLat: booking.driver_lat,
+        driverLng: booking.driver_lng,
+        pickupLat: rideDraft.pickupLat,
+        pickupLng: rideDraft.pickupLng,
+        dropLat: rideDraft.dropLat,
+        dropLng: rideDraft.dropLng,
+      })
+      toast.success('Ride booked successfully')
+    } catch (err: any) {
+      toast.error(err.message || 'Unable to book vehicle')
+    } finally {
+      setShowRideModal(false)
+      setRideLoading(false)
+    }
   }
 
   function cancelRide() {

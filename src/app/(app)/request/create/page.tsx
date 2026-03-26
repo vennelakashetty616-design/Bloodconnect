@@ -6,14 +6,13 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import toast from 'react-hot-toast'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MapPin, UserRound, Droplet, AlertCircle, Navigation, NavigationOff } from 'lucide-react'
+import { MapPin, UserRound, Droplet, AlertCircle, Navigation, NavigationOff, Building2, Phone } from 'lucide-react'
 import { TopBar } from '@/components/layout/Navigation'
 import { Button } from '@/components/ui/Button'
 import { Input, Select } from '@/components/ui/Input'
 import { HeartbeatIcon } from '@/components/ui/HeartbeatIcon'
 import { BLOOD_GROUPS } from '@/types'
 import { reverseGeocode } from '@/lib/geolocation'
-import { isSupabaseConfigured } from '@/lib/supabase/client'
 
 function getGeoErrorMessage(err: GeolocationPositionError) {
   if (err.code === err.PERMISSION_DENIED) {
@@ -28,11 +27,26 @@ function getGeoErrorMessage(err: GeolocationPositionError) {
   return 'Could not get location. Please type the address manually.'
 }
 
+function inferHospitalName(address: string) {
+  const parts = address.split(',').map((p) => p.trim()).filter(Boolean)
+  const explicitHospital = parts.find((p) => /hospital|clinic|medical|health/i.test(p))
+  if (explicitHospital) return explicitHospital
+
+  const locality = parts.find((p, index) => index > 0 && !/\d{4,}/.test(p) && p.length > 2) || parts[0]
+  if (locality) return `Nearest Hospital - ${locality}`
+
+  return 'Nearest Hospital - Auto detected location'
+}
+
 const schema = z.object({
   patient_name: z.string().min(2, 'Enter patient name or initials'),
   age: z.coerce.number().min(1, 'Enter valid age').max(120, 'Age must be 120 or less'),
   gender: z.enum(['male', 'female', 'other'] as const),
   blood_group: z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as const),
+  medical_reason: z.enum(['surgery', 'accident', 'delivery', 'thalassemia', 'other'] as const),
+  hospital_name: z.string().min(2, 'Hospital name is required'),
+  hospital_address: z.string().min(5, 'Hospital address is required'),
+  doctor_contact: z.string().optional(),
   units_needed: z.coerce.number().min(1).max(10),
   urgency: z.enum(['emergency', 'priority', 'normal']).default('priority'),
 })
@@ -44,6 +58,14 @@ const URGENCY_OPTIONS = [
   { value: 'normal', label: '🟢 Normal – Within 24–48 hours' },
 ]
 
+const MEDICAL_REASON_OPTIONS = [
+  { value: 'surgery', label: 'Surgery' },
+  { value: 'accident', label: 'Accident' },
+  { value: 'delivery', label: 'Delivery' },
+  { value: 'thalassemia', label: 'Thalassemia' },
+  { value: 'other', label: 'Other' },
+]
+
 export default function CreateRequestPage() {
   const router = useRouter()
   const [step, setStep] = useState<1 | 2>(1)
@@ -52,11 +74,21 @@ export default function CreateRequestPage() {
   const [myLng, setMyLng] = useState<number | null>(null)
   const [requestAddress, setRequestAddress] = useState('')
   const [isLiveTracking, setIsLiveTracking] = useState(false)
+  const [lastAutoHospitalName, setLastAutoHospitalName] = useState('')
+  const [lastAutoHospitalAddress, setLastAutoHospitalAddress] = useState('')
   const watchIdRef = useRef<number | null>(null)
 
   const { register, handleSubmit, control, watch, trigger, getValues, setValue, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { urgency: 'priority', units_needed: 1, gender: 'other' },
+    defaultValues: {
+      urgency: 'priority',
+      units_needed: 1,
+      gender: 'other',
+      medical_reason: 'accident',
+      hospital_name: '',
+      hospital_address: '',
+      doctor_contact: '',
+    },
   })
 
   // Cleanup live tracking on unmount
@@ -73,7 +105,22 @@ export default function CreateRequestPage() {
     setMyLng(lng)
     try {
       const addr = await reverseGeocode(lat, lng)
-      if (addr) setRequestAddress(addr)
+      if (addr) {
+        setRequestAddress(addr)
+
+        const currentAddress = getValues('hospital_address')?.trim()
+        if (!currentAddress || currentAddress === lastAutoHospitalAddress) {
+          setValue('hospital_address', addr, { shouldValidate: true })
+          setLastAutoHospitalAddress(addr)
+        }
+
+        const inferredHospitalName = inferHospitalName(addr)
+        const currentHospitalName = getValues('hospital_name')?.trim()
+        if (!currentHospitalName || currentHospitalName === lastAutoHospitalName) {
+          setValue('hospital_name', inferredHospitalName, { shouldValidate: true })
+          setLastAutoHospitalName(inferredHospitalName)
+        }
+      }
     } catch {}
   }
 
@@ -139,7 +186,16 @@ export default function CreateRequestPage() {
 
   async function nextStep() {
     if (step === 1) {
-      const ok = await trigger(['patient_name', 'age', 'gender', 'blood_group', 'units_needed'])
+      const ok = await trigger([
+        'patient_name',
+        'age',
+        'gender',
+        'blood_group',
+        'medical_reason',
+        'hospital_name',
+        'hospital_address',
+        'units_needed',
+      ])
       if (ok) setStep(2)
     }
   }
@@ -151,37 +207,13 @@ export default function CreateRequestPage() {
     }
     setSubmitting(true)
     try {
-      // Check if in demo mode (via cookie from /api/demo)
-      const isDemoMode = document.cookie.includes('demo_mode=true')
-
-      // Demo mode — skip real API, store request locally and navigate
-      if (isDemoMode || !isSupabaseConfigured()) {
-        const demoId = `demo-${Date.now()}`
-        const demoRequest = {
-          id: demoId,
-          ...data,
-          hospital_name: `Patient: ${data.patient_name}`,
-          hospital_address: requestAddress || 'Location shared by requester',
-          hospital_lat: myLat,
-          hospital_lng: myLng,
-          requester_lat: myLat,
-          requester_lng: myLng,
-          status: 'pending',
-          created_at: new Date().toISOString(),
-        }
-        try { localStorage.setItem('fuellife_active_request', JSON.stringify(demoRequest)) } catch {}
-        toast.success('🩸 Request sent! Finding donors...')
-        router.push(`/request/${demoId}`)
-        return
-      }
-
       const res = await fetch('/api/requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...data,
-          hospital_name: `Patient: ${data.patient_name}`,
-          hospital_address: requestAddress || 'Location shared by requester',
+          hospital_name: data.hospital_name,
+          hospital_address: data.hospital_address || requestAddress || 'Location shared by requester',
           hospital_lat: myLat,
           hospital_lng: myLng,
           requester_lat: myLat,
@@ -202,6 +234,7 @@ export default function CreateRequestPage() {
 
   const selectedBloodGroup = watch('blood_group')
   const urgency = watch('urgency')
+  const medicalReason = watch('medical_reason')
 
   return (
     <>
@@ -357,6 +390,86 @@ export default function CreateRequestPage() {
                   {...register('units_needed')}
                 />
 
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3 space-y-3">
+                  <p className="text-sm font-extrabold text-amber-900">Medical Context (Short but Necessary)</p>
+
+                  <Select
+                    label="Reason"
+                    options={MEDICAL_REASON_OPTIONS}
+                    error={errors.medical_reason?.message}
+                    {...register('medical_reason')}
+                  />
+
+                  <Input
+                    label="Hospital Name"
+                    placeholder="Auto-filled from your live location"
+                    icon={<Building2 size={16} />}
+                    error={errors.hospital_name?.message}
+                    {...register('hospital_name')}
+                  />
+
+                  <Input
+                    label="Hospital Address"
+                    placeholder="Auto-filled from your live location"
+                    icon={<MapPin size={16} />}
+                    error={errors.hospital_address?.message}
+                    {...register('hospital_address')}
+                  />
+
+                  <Input
+                    label="Doctor Contact (optional but recommended)"
+                    placeholder="e.g. +91 98xxxxxxx"
+                    icon={<Phone size={16} />}
+                    error={errors.doctor_contact?.message}
+                    {...register('doctor_contact')}
+                  />
+
+                  <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-xl ${
+                    myLat ? 'bg-care-50 text-care-700' : 'bg-care-50 text-care-700'
+                  }`}>
+                    {isLiveTracking ? (
+                      <span className="w-2 h-2 rounded-full bg-care-500 animate-pulse shrink-0" />
+                    ) : (
+                      <MapPin size={14} className="shrink-0" />
+                    )}
+                    <span className="flex-1 truncate">
+                      {myLat
+                        ? `Live location connected (${myLat.toFixed(4)}, ${myLng?.toFixed(4)})`
+                        : 'Share live location to auto-fill hospital name and address'}
+                      {isLiveTracking && <span className="ml-1 font-bold text-care-700"> · LIVE</span>}
+                    </span>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={startLiveTracking}
+                      disabled={isLiveTracking}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${
+                        isLiveTracking
+                          ? 'bg-care-50 border-care-300 text-red-400 cursor-not-allowed'
+                          : 'bg-care-50 border-red-400 text-care-700 hover:bg-care-100 active:scale-95'
+                      }`}
+                    >
+                      <Navigation size={14} />
+                      Share Live Location
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopLiveTracking}
+                      disabled={!isLiveTracking}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${
+                        !isLiveTracking
+                          ? 'bg-neutral-offwhite border-gray-200 text-gray-300 cursor-not-allowed'
+                          : 'bg-care-50 border-red-400 text-care-700 hover:bg-care-100 active:scale-95'
+                      }`}
+                    >
+                      <NavigationOff size={14} />
+                      Stop Live Location
+                    </button>
+                  </div>
+                </div>
+
                 {urgency === 'emergency' && (
                   <div className="flex items-start gap-2 p-3 bg-care-50 rounded-xl border border-care-100">
                     <AlertCircle size={16} className="text-care-600 mt-0.5 shrink-0" />
@@ -394,8 +507,12 @@ export default function CreateRequestPage() {
                     { label: 'Patient Name', value: getValues('patient_name') },
                     { label: 'Age', value: getValues('age') },
                     { label: 'Gender', value: getValues('gender') },
+                    { label: 'Reason', value: MEDICAL_REASON_OPTIONS.find((o) => o.value === medicalReason)?.label ?? medicalReason },
                     { label: 'Blood Group', value: selectedBloodGroup },
                     { label: 'Units Needed', value: getValues('units_needed') },
+                    { label: 'Hospital Name', value: getValues('hospital_name') },
+                    { label: 'Hospital Address', value: getValues('hospital_address') },
+                    { label: 'Doctor Contact', value: getValues('doctor_contact') || 'Not provided' },
                     { label: 'Urgency', value: URGENCY_OPTIONS.find((o) => o.value === urgency)?.label ?? urgency },
                   ].map((row) => (
                     <div key={row.label} className="flex justify-between items-start px-4 py-3">
@@ -422,36 +539,6 @@ export default function CreateRequestPage() {
                       : 'Click "Share Live Location" to allow GPS access'}
                     {isLiveTracking && <span className="ml-1 font-bold text-care-700"> · LIVE</span>}
                   </span>
-                </div>
-
-                {/* Live location buttons */}
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={startLiveTracking}
-                    disabled={isLiveTracking}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${
-                      isLiveTracking
-                        ? 'bg-care-50 border-care-300 text-red-400 cursor-not-allowed'
-                        : 'bg-care-50 border-red-400 text-care-700 hover:bg-care-100 active:scale-95'
-                    }`}
-                  >
-                    <Navigation size={14} />
-                    Share Live Location
-                  </button>
-                  <button
-                    type="button"
-                    onClick={stopLiveTracking}
-                    disabled={!isLiveTracking}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${
-                      !isLiveTracking
-                        ? 'bg-neutral-offwhite border-gray-200 text-gray-300 cursor-not-allowed'
-                        : 'bg-care-50 border-red-400 text-care-700 hover:bg-care-100 active:scale-95'
-                    }`}
-                  >
-                    <NavigationOff size={14} />
-                    Stop Live Location
-                  </button>
                 </div>
 
                 <div className="p-4 bg-care-50 rounded-2xl border border-care-200 text-sm text-blood-800 leading-relaxed">

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import { Toaster } from 'react-hot-toast'
+import { RouteLoadingOverlay } from '@/components/ui/RouteLoadingOverlay'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
@@ -40,6 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <span className="orb orb-left" />
           <span className="orb orb-right" />
         </div>
+        <RouteLoadingOverlay />
         {children}
         <Toaster
           position="top-center"

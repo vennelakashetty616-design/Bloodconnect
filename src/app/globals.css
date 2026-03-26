@@ -1,0 +1,229 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+/* ─── Base ─────────────────────────────────────────────────────────────── */
+:root {
+  --blood-red: #B11226;
+  --blood-dark: #C62828;
+  --trust-deep: #9A6117;
+  --trust-royal: #C27E1E;
+  --trust-sky: #FFF9ED;
+  --care-mint: #FFF4F5;
+  --care-soft: #FFE2E5;
+  --surface-offwhite: #FFF8EE;
+  --surface-mist: #FFF2DA;
+  --score-low: #F4A261;
+  --score-medium: #3A86FF;
+  --score-high: #2A9D8F;
+  --font-inter: 'Inter', system-ui, sans-serif;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-inter);
+  -webkit-font-smoothing: antialiased;
+  background: linear-gradient(180deg, var(--surface-offwhite) 0%, var(--surface-mist) 100%);
+  color: #0f172a;
+}
+
+/* ─── Safe areas (mobile) ───────────────────────────────────────────────── */
+.safe-area-pb {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ─── Custom scrollbar ─────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track { background: #FFE6C2; }
+::-webkit-scrollbar-thumb { background: #C27E1E; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #9A6117; }
+
+/* ─── Leaflet map overrides ─────────────────────────────────────────────── */
+.leaflet-container {
+  font-family: var(--font-inter) !important;
+  border-radius: 16px;
+}
+
+.leaflet-control-attribution {
+  font-size: 10px !important;
+}
+
+/* Emergency vehicle marker ring */
+.emergency-marker-ring {
+  animation: ripple 1.5s linear infinite;
+  border: 3px solid #B11226;
+  border-radius: 50%;
+}
+
+/* ─── Page transitions ─────────────────────────────────────────────────── */
+.page-enter {
+  opacity: 0;
+  transform: translateY(12px);
+}
+.page-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms, transform 300ms;
+}
+
+/* ─── Global side ambience (all pages) ─────────────────────────────────── */
+.global-side-rails {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.global-side-rails .rail {
+  position: absolute;
+  top: 14vh;
+  height: 72vh;
+  width: 3px;
+  border-radius: 999px;
+  opacity: 0.55;
+  animation: sideRailPulse 4.8s ease-in-out infinite;
+}
+
+.global-side-rails .rail-left {
+  left: 0;
+  background: linear-gradient(to bottom, rgba(201, 58, 88, 0), rgba(201, 58, 88, 0.9), rgba(201, 58, 88, 0));
+}
+
+.global-side-rails .rail-right {
+  right: 0;
+  background: linear-gradient(to bottom, rgba(194, 126, 30, 0), rgba(194, 126, 30, 0.9), rgba(194, 126, 30, 0));
+  animation-delay: 0.9s;
+}
+
+.global-side-rails .orb {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(52px);
+  opacity: 0.28;
+  animation: sideOrbFloat 8.2s ease-in-out infinite;
+}
+
+.global-side-rails .orb-left {
+  left: -88px;
+  top: 18vh;
+  width: 220px;
+  height: 220px;
+  background: rgba(201, 58, 88, 0.45);
+}
+
+.global-side-rails .orb-right {
+  right: -96px;
+  top: 42vh;
+  width: 240px;
+  height: 240px;
+  background: rgba(194, 126, 30, 0.4);
+  animation-delay: 1.2s;
+}
+
+/* ─── Glass morphism panel ─────────────────────────────────────────────── */
+.glass {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+/* ─── Blood drop background pattern ────────────────────────────────────── */
+.blood-pattern {
+  background-image: radial-gradient(circle at 20% 20%, rgba(194, 126, 30, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(201, 58, 88, 0.08) 0%, transparent 50%);
+}
+
+/* ─── Gradient hero ─────────────────────────────────────────────────────── */
+.hero-gradient {
+  background: linear-gradient(135deg, #B11226 0%, #D25D24 55%, #FFF4D4 100%);
+}
+
+/* ─── Distance ring animation ───────────────────────────────────────────── */
+@keyframes ring-expand {
+  0%  { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+@keyframes sideRailPulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}
+
+@keyframes sideOrbFloat {
+  0%, 100% { transform: translateY(0); opacity: 0.2; }
+  50% { transform: translateY(-18px); opacity: 0.4; }
+}
+
+.ring-expand {
+  animation: ring-expand 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ─── Donor card hover effect ───────────────────────────────────────────── */
+.donor-card:hover .donor-accept-btn {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.donor-accept-btn {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: all 0.2s ease;
+}
+
+/* ─── Toast override ────────────────────────────────────────────────────── */
+.react-hot-toast {
+  font-family: var(--font-inter) !important;
+}
+
+/* Warm tone overrides for existing utility usage across pages */
+@layer utilities {
+  .bg-care-50 { background-color: #fff4f5 !important; }
+  .bg-care-100 { background-color: #ffe2e5 !important; }
+  .bg-care-200 { background-color: #ffc6cd !important; }
+  .bg-care-500 { background-color: #e25572 !important; }
+  .bg-care-600 { background-color: #c93a58 !important; }
+  .bg-care-700 { background-color: #a82b47 !important; }
+
+  .text-care-600 { color: #c93a58 !important; }
+  .text-care-700 { color: #a82b47 !important; }
+  .text-care-800 { color: #85233a !important; }
+
+  .border-care-100 { border-color: #ffe2e5 !important; }
+  .border-care-200 { border-color: #ffc6cd !important; }
+  .border-care-300 { border-color: #ff9eab !important; }
+
+  .bg-trust-50 { background-color: #fff9ed !important; }
+  .bg-trust-100 { background-color: #ffefcf !important; }
+  .bg-trust-200 { background-color: #ffe09f !important; }
+  .bg-trust-500 { background-color: #e39d34 !important; }
+  .bg-trust-600 { background-color: #c27e1e !important; }
+  .bg-trust-700 { background-color: #9a6117 !important; }
+
+  .text-trust-500 { color: #e39d34 !important; }
+  .text-trust-600 { color: #c27e1e !important; }
+  .text-trust-700 { color: #9a6117 !important; }
+  .text-trust-800 { color: #7b4d13 !important; }
+
+  .border-trust-100 { border-color: #ffefcf !important; }
+  .border-trust-200 { border-color: #ffe09f !important; }
+  .border-trust-300 { border-color: #ffd070 !important; }
+
+  .focus\:ring-care-100:focus { --tw-ring-color: #ffe2e5 !important; }
+  .focus\:ring-trust-300:focus { --tw-ring-color: #ffd070 !important; }
+  .focus\:border-care-600:focus { border-color: #c93a58 !important; }
+  .focus\:border-trust-500:focus { border-color: #e39d34 !important; }
+}
